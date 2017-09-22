@@ -9,6 +9,7 @@
 .idea
 .venv
 *.egg-info
+*.pyc
 AUTHORS
 Authors
 build-stamp
