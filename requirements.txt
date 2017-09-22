@@ -5,3 +5,7 @@ oslo.messaging
 eventlet<0.20.0
 flask
 pika<0.11
+python-neutronclient
+python-novaclient
+python-keystoneclient
+python-glanceclient

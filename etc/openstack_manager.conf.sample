@@ -254,9 +254,9 @@
 #host = localhost
 
 # IP address to listen on (string value)
-#bind_host = 127.0.0.1
+#bind_host = 0.0.0.0
 
 # Port number to listen on (integer value)
 # Minimum value: 1
 # Maximum value: 65535
-#bind_port = 8080
+#bind_port = 19999
