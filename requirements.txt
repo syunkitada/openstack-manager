@@ -1,0 +1,7 @@
+oslo.config
+oslo.db
+oslo.service
+oslo.messaging
+eventlet<0.20.0
+flask
+pika<0.11
