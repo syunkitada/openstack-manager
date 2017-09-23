@@ -9,6 +9,8 @@ from keystoneauth1.identity import v3
 from keystoneauth1 import session
 from keystoneclient.v3 import client as keystone_client
 from neutronclient.v2_0 import client as neutron_client
+from novaclient import client as nova_client
+import glanceclient as glance_client
 wsgi_app = Flask(__name__)
 
 CONF = cfg.CONF
@@ -42,6 +44,8 @@ class PeriodicManager(periodic_task.PeriodicTasks):
         sess = session.Session(auth=auth, verify=False)
         self.keystone = keystone_client.Client(session=sess)
         self.neutron = neutron_client.Client(session=sess)
+        self.nova = nova_client.Client('2.1', session=sess)
+        self.glance = glance_client.Client('2', session=sess)
 
     def periodic_tasks(self, context, raise_on_error=False):
         return self.run_periodic_tasks(context, raise_on_error=raise_on_error)
@@ -53,13 +57,27 @@ class PeriodicManager(periodic_task.PeriodicTasks):
         tmp_pmetrics = ""
 
         start_time = time.time()
-        project_list = self.keystone.projects.list()
+        self.keystone.projects.list()
         elapsed_time = time.time() - start_time
         tmp_pmetrics += 'openstack_keystone_project_list_latency{{svc="keystone"}} {0}\n'.format(elapsed_time)
 
         start_time = time.time()
-        network_list = self.neutron.list_networks()
+        self.neutron.list_networks()
         elapsed_time = time.time() - start_time
         tmp_pmetrics += 'openstack_neutron_network_list_latency{{svc="neutron"}} {0}\n'.format(elapsed_time)
+
+        start_time = time.time()
+        self.nova.flavors.list()
+        elapsed_time = time.time() - start_time
+        tmp_pmetrics += 'openstack_nova_flavor_list_latency{{svc="nova"}} {0}\n'.format(elapsed_time)
+
+        start_time = time.time()
+        self.glance.images.list()
+        elapsed_time = time.time() - start_time
+        tmp_pmetrics += 'openstack_glance_image_list_latency{{svc="glance"}} {0}\n'.format(elapsed_time)
+
         pmetrics = tmp_pmetrics
         LOG.info(pmetrics)
+
+
+
