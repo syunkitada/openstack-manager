@@ -55,11 +55,11 @@ class PeriodicManager(periodic_task.PeriodicTasks):
         start_time = time.time()
         project_list = self.keystone.projects.list()
         elapsed_time = time.time() - start_time
-        tmp_pmetrics += "openstack_keystone_project_list_latency{{label=keystone}} {0}\n".format(elapsed_time)
+        tmp_pmetrics += 'openstack_keystone_project_list_latency{{svc="keystone"}} {0}\n'.format(elapsed_time)
 
         start_time = time.time()
         network_list = self.neutron.list_networks()
         elapsed_time = time.time() - start_time
-        tmp_pmetrics += "openstack_neutron_network_list_latency{{label=neutron}} {0}\n".format(elapsed_time)
+        tmp_pmetrics += 'openstack_neutron_network_list_latency{{svc="neutron"}} {0}\n'.format(elapsed_time)
         pmetrics = tmp_pmetrics
         LOG.info(pmetrics)
