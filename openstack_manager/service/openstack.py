@@ -1,22 +1,32 @@
 # coding: utf-8
 
+import threading
 import time
+
+from flask import Flask
+
 from oslo_service import periodic_task
 from oslo_config import cfg
 from oslo_log import log
-from flask import Flask
+from oslo_service import service
+
 from keystoneauth1.identity import v3
 from keystoneauth1 import session
 from keystoneclient.v3 import client as keystone_client
 from neutronclient.v2_0 import client as neutron_client
 from novaclient import client as nova_client
 import glanceclient as glance_client
+
 wsgi_app = Flask(__name__)
 
 CONF = cfg.CONF
 LOG = log.getLogger(__name__)
-periodic_manager = None
 pmetrics = ""
+
+
+def launch():
+    launcher = service.launch(CONF, OpenStackService())
+    launcher.wait()
 
 
 @wsgi_app.route("/")
@@ -29,15 +39,49 @@ def metrics():
     return pmetrics
 
 
-def init():
-    global periodic_manager
-    periodic_manager = PeriodicManager()
+class OpenStackService(service.Service):
+    def __init__(self, name='openstack_manager'):
+        super(OpenStackService, self).__init__()
+
+    def start(self):
+        LOG.info('start')
+        self.periodic_service = PeriodicService()
+        self.wsgi_thread = self.spawn_app()
+        self.tg.add_dynamic_timer(self.periodic_tasks,
+                                  initial_delay=0,
+                                  periodic_interval_max=120)
+
+    def wait(self):
+        LOG.info('wait')
+
+    def stop(self):
+        LOG.info('stop')
+
+        if self.wsgi_thread:
+            self.wsgi_thread.join()
+
+        super(OpenStackService, self).stop()
+
+    def periodic_tasks(self, raise_on_error=False):
+        ctxt = {}
+        return self.periodic_service.periodic_tasks(ctxt, raise_on_error=raise_on_error)
+
+    def spawn_app(self):
+        # t = threading.Thread(target=wsgi_app.run, args=args, kwargs=kwargs)
+
+        t = threading.Thread(target=wsgi_app.run, kwargs={
+            'host': CONF.openstack_manager.bind_host,
+            'port': CONF.openstack_manager.bind_port
+        })
+        t.daemon = True
+        t.start()
+        return t
 
 
-class PeriodicManager(periodic_task.PeriodicTasks):
+class PeriodicService(periodic_task.PeriodicTasks):
     def __init__(self):
-        super(PeriodicManager, self).__init__(CONF)
-        self.service_name = 'periodic_manager'
+        super(PeriodicService, self).__init__(CONF)
+        self.service_name = 'periodic_service'
         auth = v3.Password(auth_url='https://keystone-public.k8s.example.com/v3', username="admin",
                            password="adminpass", project_name="admin",
                            user_domain_id="default", project_domain_id="default")
