@@ -9,4 +9,5 @@ python-neutronclient
 python-novaclient
 python-keystoneclient
 python-glanceclient
+influxdb
 watchdog

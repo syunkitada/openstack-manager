@@ -2,8 +2,10 @@
 
 import threading
 import time
+from datetime import datetime
 
 from flask import Flask
+from influxdb import InfluxDBClient
 
 from oslo_service import periodic_task
 from oslo_config import cfg
@@ -21,11 +23,11 @@ wsgi_app = Flask(__name__)
 
 CONF = cfg.CONF
 LOG = log.getLogger(__name__)
-pmetrics = ""
+metrics_map = {}
 
 
 def launch():
-    launcher = service.launch(CONF, OpenStackService())
+    launcher = service.launch(CONF, OpenstackService())
     launcher.wait()
 
 
@@ -36,20 +38,33 @@ def status():
 
 @wsgi_app.route("/metrics")
 def metrics():
+    pmetrics = ''
+    for measurement, metrics in metrics_map.items():
+        labels = ''
+        for k, v in metrics['tags'].items():
+            labels += '{0}="{1}",'.format(k, v)
+        labels = labels[:-1]
+        pmetrics += '{0}{{{1}}} {2}\n'.format(measurement, labels, metrics['value'])
     return pmetrics
 
 
-class OpenStackService(service.Service):
+class OpenstackService(service.Service):
     def __init__(self, name='openstack_manager'):
-        super(OpenStackService, self).__init__()
+        super(OpenstackService, self).__init__()
 
     def start(self):
         LOG.info('start')
-        self.periodic_service = PeriodicService()
+        self.openstack_periodic_tasks = OpenstackPeriodicTasks()
+        self.influxdb_periodic_tasks = InfluxdbPeriodicTasks()
         self.wsgi_thread = self.spawn_app()
-        self.tg.add_dynamic_timer(self.periodic_tasks,
+        self.tg.add_dynamic_timer(self.get_openstack_periodic_tasks,
                                   initial_delay=0,
                                   periodic_interval_max=120)
+
+        if CONF.openstack_manager.enable_influxdb:
+            self.tg.add_dynamic_timer(self.get_influxdb_periodic_tasks,
+                                      initial_delay=0,
+                                      periodic_interval_max=120)
 
     def wait(self):
         LOG.info('wait')
@@ -60,11 +75,15 @@ class OpenStackService(service.Service):
         if self.wsgi_thread:
             self.wsgi_thread.join()
 
-        super(OpenStackService, self).stop()
+        super(OpenstackService, self).stop()
 
-    def periodic_tasks(self, raise_on_error=False):
+    def get_openstack_periodic_tasks(self, raise_on_error=False):
         ctxt = {}
-        return self.periodic_service.periodic_tasks(ctxt, raise_on_error=raise_on_error)
+        return self.openstack_periodic_tasks.periodic_tasks(ctxt, raise_on_error=raise_on_error)
+
+    def get_influxdb_periodic_tasks(self, raise_on_error=False):
+        ctxt = {}
+        return self.influxdb_periodic_tasks.periodic_tasks(ctxt, raise_on_error=raise_on_error)
 
     def spawn_app(self):
         # t = threading.Thread(target=wsgi_app.run, args=args, kwargs=kwargs)
@@ -78,10 +97,9 @@ class OpenStackService(service.Service):
         return t
 
 
-class PeriodicService(periodic_task.PeriodicTasks):
+class OpenstackPeriodicTasks(periodic_task.PeriodicTasks):
     def __init__(self):
-        super(PeriodicService, self).__init__(CONF)
-        self.service_name = 'periodic_service'
+        super(OpenstackPeriodicTasks, self).__init__(CONF)
         auth = v3.Password(auth_url='https://keystone-public.k8s.example.com/v3', username="admin",
                            password="adminpass", project_name="admin",
                            user_domain_id="default", project_domain_id="default")
@@ -96,29 +114,68 @@ class PeriodicService(periodic_task.PeriodicTasks):
 
     @periodic_task.periodic_task(spacing=10)
     def check(self, context):
-        global pmetrics
-        LOG.info('start check')
-        tmp_pmetrics = ""
+        LOG.info('Start check openstack')
+
+        timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
         start_time = time.time()
         self.keystone.projects.list()
         elapsed_time = time.time() - start_time
-        tmp_pmetrics += 'openstack_keystone_project_list_latency{{svc="keystone"}} {0}\n'.format(elapsed_time)
+        metrics_map['openstack_keystone_project_list_latency'] = {
+            'tags': {"svc": "keystone"},
+            'value': elapsed_time,
+            'time': timestamp,
+        }
 
         start_time = time.time()
         self.neutron.list_networks()
         elapsed_time = time.time() - start_time
-        tmp_pmetrics += 'openstack_neutron_network_list_latency{{svc="neutron"}} {0}\n'.format(elapsed_time)
+        metrics_map['openstack_neutron_network_list_latency'] = {
+            'tags': {"svc": "neutron"},
+            'value': elapsed_time,
+            'time': timestamp,
+        }
 
         start_time = time.time()
         self.nova.flavors.list()
         elapsed_time = time.time() - start_time
-        tmp_pmetrics += 'openstack_nova_flavor_list_latency{{svc="nova"}} {0}\n'.format(elapsed_time)
+        metrics_map['openstack_nova_flavor_list_latency'] = {
+            'tags': {"svc": "nova"},
+            'value': elapsed_time,
+            'time': timestamp,
+        }
 
         start_time = time.time()
         self.glance.images.list()
         elapsed_time = time.time() - start_time
-        tmp_pmetrics += 'openstack_glance_image_list_latency{{svc="glance"}} {0}\n'.format(elapsed_time)
+        metrics_map['openstack_glance_image_list_latency'] = {
+            'tags': {"svc": "glance"},
+            'value': elapsed_time,
+            'time': timestamp,
+        }
 
-        pmetrics = tmp_pmetrics
-        LOG.info(pmetrics)
+        LOG.info(metrics_map)
+
+
+class InfluxdbPeriodicTasks(periodic_task.PeriodicTasks):
+    def __init__(self):
+        super(InfluxdbPeriodicTasks, self).__init__(CONF)
+        self.influxdb = InfluxDBClient('10.32.237.184', 8086, 'root', 'rootpass', 'openstack')
+
+    def periodic_tasks(self, context, raise_on_error=False):
+        return self.run_periodic_tasks(context, raise_on_error=raise_on_error)
+
+    @periodic_task.periodic_task(spacing=60)
+    def report(self, context):
+        LOG.info('report influxdb')
+        json_body = []
+        for measurement, metrics in metrics_map.items():
+            json_body.append({
+                "measurement": measurement,
+                "tags": metrics["tags"],
+                "fields": {
+                    "value": metrics["value"],
+                }
+            })
+
+        self.influxdb.write_points(json_body)

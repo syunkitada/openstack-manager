@@ -260,3 +260,28 @@
 # Minimum value: 1
 # Maximum value: 65535
 #bind_port = 19999
+
+# Port number to listen on (boolean value)
+#enable_influxdb = true
+
+
+[rabbitmq_manager]
+
+#
+# From openstack_manager.conf
+#
+
+# services (list value)
+#services = common
+
+# backups (integer value)
+#cluster_backups = 1
+
+# tiller_namespace (string value)
+#tiller_namespace = kube-system
+
+# k8s_namespace (string value)
+#k8s_namespace = openstack
+
+# chart_repo_prefix (string value)
+#chart_repo_prefix = /home/fabric/openstack-helm
