@@ -339,6 +339,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
         }
 
     def test_queue(self, cluster):
+        # TODO pod に対してtestを行う
         exchange = Exchange('testex', type='direct')
         queue = Queue('testqueue', exchange=exchange, routing_key='test.health')
         start = time.time()
