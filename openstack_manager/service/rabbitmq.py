@@ -4,6 +4,7 @@ import threading
 import traceback
 import time
 import re
+import json
 from datetime import datetime
 
 from flask import Flask
@@ -216,7 +217,10 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
             else:
                 cluster['provisioning_status'] = STATUS_ACTIVE
 
-            result = util.execute('kubectl get pod -n {0} -l app={1}'.format(CONF.rabbitmq_manager.k8s_namespace, name))
+            result = util.execute('kubectl get pod -n {0} -l app={1} -o json'.format(CONF.rabbitmq_manager.k8s_namespace, name))
+            print json.loads(result['stdout'])
+
+            return
             pods = 0
             running_pods = 0
             running_nodes = 0
@@ -239,7 +243,9 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                 running_pods += 1
 
                 pod = line.split(' ', 1)[0]
+                LOG.error("DEBUG11111")
                 cluster_status = self.get_cluster_status(pod)
+                LOG.error("DEBUG222222")
                 if cluster_status is None:
                     failed_get_cluster_status += 1
 
@@ -253,9 +259,11 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                 self.destroy(name)
                 continue
 
+            LOG.error("DEBUG 3333")
             if running_pods >= 2 and not self.test_queue(cluster):
                 self.destroy(name)
                 continue
+            LOG.error("DEBUG 4444")
 
             if unhealty_pods != 0:
                 is_healty = False
@@ -292,7 +300,11 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                 if is_healty:
                     cluster['provisioning_status'] = 1
 
+        LOG.error("DEBUG 5555")
         self.assign_services_to_cluster()
+        LOG.info("Check Summary")
+        for cluster_name, cluster in self.cluster_map.items():
+            LOG.info("{0}: {1}".format(cluster_name, cluster))
 
     def get_cluster_status(self, pod_name):
         cluster_status = util.execute('kubectl exec -n {0} {1} rabbitmqctl cluster_status'.format(
@@ -349,11 +361,11 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
         return True
 
     def destroy(self, name):
-        LOG.info("Destroy {0}".format(name))
+        LOG.error("Destroy {0}: {1}".format(name, self.cluster_map[name]))
         self.assign_services_to_cluster(ignore=name)
         util.execute('helm delete --tiller-namespace {0} --purge {1}'.format(CONF.rabbitmq_manager.tiller_namespace, name))
-        self.cluster_map['name']['provisioning_status'] = -1
-        self.cluster_map['name']['assigned_svc'] = None
+        self.cluster_map[name]['provisioning_status'] = -1
+        self.cluster_map[name]['assigned_svc'] = None
 
     def assign_services_to_cluster(self, ignore=None):
         for svc_name, svc in self.svc_map.items():
@@ -373,7 +385,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
 class InfluxdbPeriodicTasks(periodic_task.PeriodicTasks):
     def __init__(self):
         super(InfluxdbPeriodicTasks, self).__init__(CONF)
-        self.influxdb = InfluxDBClient('10.32.237.184', 8086, 'root', 'rootpass', 'rabbitmq')
+        self.influxdb = InfluxDBClient('10.32.237.184', 8086, 'root', 'rootpass', 'openstack')
 
     def periodic_tasks(self, context, raise_on_error=False):
         return self.run_periodic_tasks(context, raise_on_error=raise_on_error)
