@@ -155,7 +155,6 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
             else:
                 svc['provisioning_status'] = STATUS_ACTIVE
                 selector = self.k8s_svc_map[name].spec.selector['app']
-                print selector
                 if selector != 'none':
                     svc['selector'] = self.k8s_svc_map[name].spec.selector['app']
 
@@ -227,8 +226,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
             if name not in self.helm_resource_map:
                 self.helm.install(name, 'rabbitmq-cluster')
                 cluster['provisioning_status'] = STATUS_INSTALLED
-            else:
-                cluster['provisioning_status'] = STATUS_ACTIVE
+                continue
 
             pods = 0
             running_pods = 0
@@ -268,13 +266,15 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
 
                 running_nodes += cluster_status['running_nodes']
 
+                self.test_queue(pod)
+
             if is_partition:
                 self.destroy(name)
                 continue
 
-            if running_pods >= 2 and not self.test_queue(cluster):
-                self.destroy(name)
-                continue
+            # if running_pods >= 2 and not self.test_queue(cluster):
+            #     self.destroy(name)
+            #     continue
 
             if unhealty_pods != 0:
                 is_healty = False
@@ -311,7 +311,6 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                 if is_healty:
                     cluster['provisioning_status'] = 1
 
-        LOG.error("DEBUG 5555")
         self.assign_services_to_cluster()
         LOG.info("Check Summary")
         for cluster_name, cluster in self.cluster_map.items():
@@ -350,14 +349,15 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
             'is_partition': (partitions_count > 0),
         }
 
-    def test_queue(self, cluster):
-        return True
-        # TODO pod に対してtestを行う
+    def test_queue(self, pod):
+        connection = 'amqp://{0}:{1}@{2}:5672/test'.format(
+            self.user, self.password, pod.status.pod_ip)
+        print connection
         exchange = Exchange('testex', type='direct')
         queue = Queue('testqueue', exchange=exchange, routing_key='test.health')
         start = time.time()
         try:
-            with Connection(cluster['connection']) as c:
+            with Connection(connection) as c:
                 bound = queue(c.default_channel)
                 bound.declare()
                 bound_exc = exchange(c.default_channel)
@@ -389,7 +389,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                         continue
 
                     if cluster['provisioning_status'] >= STATUS_ACTIVE and cluster['assigned_svc'] is None:
-                        option = "--set selector={1},transport_url='{1}'".format(
+                        option = "--set selector={0},transport_url='{1}'".format(
                             cluster_name, svc['transport_url'])
                         self.helm.upgrade(svc_name, 'rabbitmq-svc', option)
                         cluster['assigned_svc'] = svc_name

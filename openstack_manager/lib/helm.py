@@ -28,8 +28,8 @@ class Helm():
     def delete(self, name):
         util.execute('helm delete --purge {0}'.format(name))
 
-    def upgrade(self, name, chart, option):
-        util.execute("helm upgrade {0} {1}/{2}".format(
+    def upgrade(self, name, chart, option=''):
+        util.execute("helm upgrade {0} {1}/{2} {3}".format(
                         name, self.chart_repo_prefix, chart, option))
 
     def get_resource_map(self):
