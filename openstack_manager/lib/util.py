@@ -1,24 +1,14 @@
 # coding: utf-8
 
+import hashlib
 import os
 import stat
 import subprocess
-from logging import getLogger, StreamHandler, DEBUG, Formatter
+from oslo_config import cfg
+from oslo_log import log
 
-
-def getLog(name):
-    LOG_LEVEL = os.environ.get('LOG_LEVEL', DEBUG)
-    logger = getLogger(name)
-    formatter = Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler = StreamHandler()
-    handler.setLevel(DEBUG)
-    handler.setFormatter(formatter)
-    logger.setLevel(DEBUG)
-    logger.addHandler(handler)
-    return logger
-
-
-LOG = getLog(__name__)
+CONF = cfg.CONF
+LOG = log.getLogger(__name__)
 
 
 def execute(cmd, is_chmod=False, enable_exception=True):
@@ -31,7 +21,7 @@ def execute(cmd, is_chmod=False, enable_exception=True):
     stdout = ''
     while True:
         line = p.stdout.readline()
-        LOG.info(line[:-1])
+        LOG.debug(line[:-1])
         stdout += line
         if not line and p.poll() is not None:
             break

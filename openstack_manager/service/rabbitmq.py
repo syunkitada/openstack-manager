@@ -1,5 +1,6 @@
 # coding: utf-8
 
+import os
 import threading
 import traceback
 import time
@@ -10,13 +11,14 @@ from datetime import datetime
 from flask import Flask
 from influxdb import InfluxDBClient
 from kombu import Connection, Exchange, Queue
+from kubernetes import client, config
 
 from oslo_service import periodic_task
 from oslo_config import cfg
 from oslo_log import log
 from oslo_service import service
 
-from openstack_manager.lib import util
+from openstack_manager.lib import util, helm
 
 wsgi_app = Flask(__name__)
 
@@ -25,11 +27,13 @@ LOG = log.getLogger(__name__)
 
 metrics_map = {}
 
-RE_HELM_LIST = re.compile('^([a-zA-Z0-9\-]+)[ \t]+([\d]+)[ \t]+.*[ \t]+([A-Z]+)[ \t]+([a-zA-Z0-9\-]+)-([0-9\.]+)[ \t]+.*')
 STATUS_NOT_INSTALLED = -1
 STATUS_INSTALLED = 0
 STATUS_ACTIVE = 1
 STATUS_ACTIVE_ALL_GREEN = 2
+
+config.load_kube_config()
+k8s_corev1api = client.CoreV1Api()
 
 
 def launch():
@@ -67,7 +71,7 @@ class RabbitmqService(service.Service):
                                   initial_delay=0,
                                   periodic_interval_max=120)
 
-        if CONF.openstack_manager.enable_influxdb:
+        if CONF.openstack_manager.enable_influxdb and False:
             self.tg.add_dynamic_timer(self.get_influxdb_periodic_tasks,
                                       initial_delay=0,
                                       periodic_interval_max=120)
@@ -113,17 +117,11 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
         self.cluster_map = {}
         self.svc_map = {}
         self.helm_resource_map = {}
+        self.k8s_services = {}
+        self.k8s_pods = {}
+        self.helm = helm.Helm()
 
-        self.update_helm_resource_map()
-
-        result = util.execute("kubectl get node -l rabbitmq-node=enable")
-        rabbit_hosts = []
-        for line in result['stdout'].split('\n'):
-            if line.find(' Ready ') > 0:
-                rabbit_hosts.append(line.split(' ', 1)[0])
-
-        if len(rabbit_hosts) < 1:
-            raise Exception('rabbit_hosts are not found')
+        self.update_resource_map()
 
         # initialize cluster_map
         pool_count = len(CONF.rabbitmq_manager.services) + CONF.rabbitmq_manager.cluster_backups
@@ -133,7 +131,6 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
             self.cluster_map[name] = {
                 'provisioning_status': STATUS_NOT_INSTALLED,
                 'assigned_svc': None,
-                'connection': 'amqp://{0}:{1}@{2}:5672/test'.format(self.user, self.password, name),
                 'warning': {
                     'exists_unhealty_pods': 0,
                     'exists_standalone_nodes': 0,
@@ -146,58 +143,77 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
             name = 'rabbitmq-svc-{0}'.format(svc_vhost)
             self.svc_map[name] = {
                 'provisioning_status': STATUS_NOT_INSTALLED,
-                'vhost': '{0}'.format(svc_vhost),
+                'vhost': svc_vhost,
                 'selector': None,
             }
 
-        # helm install svc_map, and set transport_url
+        # helm install svc_map
         for name, svc in self.svc_map.items():
             if name not in self.helm_resource_map:
-                util.execute('helm install --name {0} --tiller-namespace {1} --namespace {2} {3}/rabbitmq-svc'.format(
-                    name, CONF.rabbitmq_manager.tiller_namespace,
-                    CONF.rabbitmq_manager.k8s_namespace, CONF.rabbitmq_manager.chart_repo_prefix
-                ))
+                self.helm.install(name, 'rabbitmq-svc')
                 svc['provisioning_status'] = STATUS_INSTALLED
             else:
                 svc['provisioning_status'] = STATUS_ACTIVE
-                result = util.execute("kubectl get svc -n {0} {1} -o jsonpath='{{.spec.selector.app}}'".format(
-                    CONF.rabbitmq_manager.k8s_namespace, name))
-                svc['selector'] = result['stdout']
+                selector = self.k8s_svc_map[name].spec.selector['app']
+                print selector
+                if selector != 'none':
+                    svc['selector'] = self.k8s_svc_map[name].spec.selector['app']
 
-            transport_url = 'rabbit:\\\\/\\\\/'
-            result = util.execute("kubectl get svc -n {0} {1} -o jsonpath={{.spec.ports[0].nodePort}}".format(
-                CONF.rabbitmq_manager.k8s_namespace, name
-            ))
-            rabbit_port = result['stdout']
-            for host in rabbit_hosts:
-                if host == '':
-                    continue
-                transport_url += "{0}:{1}@{2}:{3}\,".format(
-                    self.user, self.password, host, rabbit_port
-                )
-            transport_url = transport_url[0:-2] + '\\\\/' + svc['vhost']
-            svc['transport_url'] = transport_url
-
-    def update_helm_resource_map(self):
+    def update_resource_map(self):
         self.helm_resource_map = {}
-        result = util.execute('helm list --tiller-namespace {0}'.format(CONF.rabbitmq_manager.tiller_namespace))
-        for line in result['stdout'].split('\n'):
-            m = RE_HELM_LIST.match(line)
-            if m is None:
+        self.k8s_svc_map = {}
+        self.k8s_pods_map = {}
+
+        self.rabbitmq_nodes = k8s_corev1api.list_node(
+            label_selector=CONF.rabbitmq_manager.label_selector).items
+
+        if len(self.rabbitmq_nodes) < 1:
+            raise Exception('rabbitmq-nodes are not found')
+
+        self.helm_resource_map = self.helm.get_resource_map()
+
+        k8s_svcs = k8s_corev1api.list_namespaced_service(
+            CONF.rabbitmq_manager.k8s_namespace).items
+
+        k8s_pods = k8s_corev1api.list_namespaced_pod(
+            CONF.rabbitmq_manager.k8s_namespace).items
+
+        for k8s_pod in k8s_pods:
+            app_label = k8s_pod.metadata.labels.get('app')
+            if app_label is None:
+                continue
+            pods = self.k8s_pods_map.get(app_label, [])
+            pods.append(k8s_pod)
+            self.k8s_pods_map[app_label] = pods
+
+        for k8s_svc in k8s_svcs:
+            name = k8s_svc.metadata.name
+            self.k8s_svc_map[name] = k8s_svc
+
+            svc = self.svc_map.get(name)
+            if svc is None:
                 continue
 
-            resource_name = m.group(1)
-            revision = m.group(2)
-            status = m.group(3)
-            chart = m.group(4)
-            version = m.group(5)
+            node_port = None
+            for port in k8s_svc.spec.ports:
+                if port.name == 'rabbitmq':
+                    node_port = port.node_port
+                    break
 
-            self.helm_resource_map[resource_name] = {
-                'revision': revision,
-                'status': status,
-                'chart': chart,
-                'version': version,
-            }
+            transport_url = 'rabbit:\\\\/\\\\/'
+            for node in self.rabbitmq_nodes:
+                node_ip = None
+                for address in node.status.addresses:
+                    if address.type == 'InternalIP':
+                        node_ip = address.address
+                        break
+
+                transport_url += "{0}:{1}@{2}:{3}\,".format(
+                    self.user, self.password, node_ip, node_port
+                )
+
+            transport_url = transport_url[0:-2] + '\\\\/' + svc['vhost']
+            svc['transport_url'] = transport_url
 
     def periodic_tasks(self, context, raise_on_error=False):
         return self.run_periodic_tasks(context, raise_on_error=raise_on_error)
@@ -205,22 +221,15 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
     @periodic_task.periodic_task(spacing=10)
     def check(self, context):
         LOG.info('Start check')
-        self.update_helm_resource_map()
+        self.update_resource_map()
 
         for name, cluster in self.cluster_map.items():
             if name not in self.helm_resource_map:
-                util.execute('helm install --name {0} --tiller-namespace {1} --namespace {2} {3}/rabbitmq-cluster -f {4}'.format(
-                    name, CONF.rabbitmq_manager.tiller_namespace, CONF.rabbitmq_manager.k8s_namespace,
-                    CONF.rabbitmq_manager.chart_repo_prefix, CONF.rabbitmq_manager.values_file_path
-                ))
+                self.helm.install(name, 'rabbitmq-cluster')
                 cluster['provisioning_status'] = STATUS_INSTALLED
             else:
                 cluster['provisioning_status'] = STATUS_ACTIVE
 
-            result = util.execute('kubectl get pod -n {0} -l app={1} -o json'.format(CONF.rabbitmq_manager.k8s_namespace, name))
-            print json.loads(result['stdout'])
-
-            return
             pods = 0
             running_pods = 0
             running_nodes = 0
@@ -228,24 +237,28 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
             failed_get_cluster_status = 0
             is_partition = False
             is_healty = True
-            for line in result['stdout'].split('\n'):
-                if line.find('Error') > 1 or line.find('Crash') > 1:
-                    LOG.error('Pod is error, these node will be self.destroyed')
-                    self.destroy(name)
+            for pod in self.k8s_pods_map[name]:
+                # if line.find('Error') > 1 or line.find('Crash') > 1:
+                #     LOG.error('Pod is error, these node will be self.destroyed')
+                #     self.destroy(name)
 
                 pods += 1
-                if line.find('Running') == -1:
+                if not pod.status.phase == 'Running':
                     continue
-                if line.find(' 1/1 ') == -1:
+
+                is_ready = True
+                LOG.debug(pod.status)
+                for cstatus in pod.status.container_statuses:
+                    if not cstatus.ready:
+                        is_ready = False
+                        break
+                if not is_ready:
                     unhealty_pods += 1
                     continue
 
                 running_pods += 1
 
-                pod = line.split(' ', 1)[0]
-                LOG.error("DEBUG11111")
                 cluster_status = self.get_cluster_status(pod)
-                LOG.error("DEBUG222222")
                 if cluster_status is None:
                     failed_get_cluster_status += 1
 
@@ -259,11 +272,9 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                 self.destroy(name)
                 continue
 
-            LOG.error("DEBUG 3333")
             if running_pods >= 2 and not self.test_queue(cluster):
                 self.destroy(name)
                 continue
-            LOG.error("DEBUG 4444")
 
             if unhealty_pods != 0:
                 is_healty = False
@@ -306,10 +317,11 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
         for cluster_name, cluster in self.cluster_map.items():
             LOG.info("{0}: {1}".format(cluster_name, cluster))
 
-    def get_cluster_status(self, pod_name):
+    def get_cluster_status(self, pod):
+        pod_name = pod.metadata.name
         cluster_status = util.execute('kubectl exec -n {0} {1} rabbitmqctl cluster_status'.format(
             CONF.rabbitmq_manager.k8s_namespace, pod_name),
-                                      enable_exception=False)
+                                     enable_exception=False)
         if cluster_status['return_code'] != 0:
             return None
 
@@ -339,6 +351,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
         }
 
     def test_queue(self, cluster):
+        return True
         # TODO pod に対してtestを行う
         exchange = Exchange('testex', type='direct')
         queue = Queue('testqueue', exchange=exchange, routing_key='test.health')
@@ -364,7 +377,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
     def destroy(self, name):
         LOG.error("Destroy {0}: {1}".format(name, self.cluster_map[name]))
         self.assign_services_to_cluster(ignore=name)
-        util.execute('helm delete --tiller-namespace {0} --purge {1}'.format(CONF.rabbitmq_manager.tiller_namespace, name))
+        self.helm.delete(name)
         self.cluster_map[name]['provisioning_status'] = -1
         self.cluster_map[name]['assigned_svc'] = None
 
@@ -375,9 +388,10 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                     if cluster_name == ignore:
                         continue
 
-                    if cluster['provisioing_status'] == 1 and cluster['assigned_svc'] is None:
-                        util.execute("helm upgrade {0} --tiller-namespace {1} --set selector={2},transport_url='{4}'".format(
-                            svc_name, CONF.rabbitmq_manager.tiller_namespace, cluster_name, svc['transport_url']))
+                    if cluster['provisioning_status'] >= STATUS_ACTIVE and cluster['assigned_svc'] is None:
+                        option = "--set selector={1},transport_url='{1}'".format(
+                            cluster_name, svc['transport_url'])
+                        self.helm.upgrade(svc_name, 'rabbitmq-svc', option)
                         cluster['assigned_svc'] = svc_name
                         svc['selector'] = cluster_name
                         break

@@ -271,17 +271,43 @@
 # From openstack_manager.conf
 #
 
+# IP address to listen on (string value)
+#bind_host = 0.0.0.0
+
+# Port number to listen on (integer value)
+# Minimum value: 1
+# Maximum value: 65535
+#bind_port = 19998
+
+# check_interval (integer value)
+#check_interval = 20
+
+# wait_unhealty_pods_interval (integer value)
+#wait_unhealty_pods_time = 300
+
+# rabbitmq user (string value)
+#user = openstack
+
+# rabbitmq password (string value)
+#password = openstackpass
+
 # services (list value)
 #services = common
 
 # backups (integer value)
 #cluster_backups = 1
 
-# tiller_namespace (string value)
-#tiller_namespace = kube-system
-
 # k8s_namespace (string value)
 #k8s_namespace = openstack
 
+# values_file_path (string value)
+#values_file_path = /home/fabric/openstack-helm/openstack/values.yaml
+
+# tiller_namespace (string value)
+#tiller_namespace = kube-system
+
 # chart_repo_prefix (string value)
 #chart_repo_prefix = /home/fabric/openstack-helm
+
+# rpc_timeout (integer value)
+#rpc_timeout = 10

@@ -68,6 +68,10 @@ rabbitmq_manager_opts = [
     cfg.IntOpt('rpc_timeout',
                default=10,
                help='rpc_timeout'),
+    cfg.StrOpt('label_selector',
+               default='rabbitmq-node=enable',
+               help='chart_repo_prefix'),
+
 ]
 
 

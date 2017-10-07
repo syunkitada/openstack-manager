@@ -11,3 +11,4 @@ python-keystoneclient
 python-glanceclient
 influxdb
 watchdog
+kubernetes
