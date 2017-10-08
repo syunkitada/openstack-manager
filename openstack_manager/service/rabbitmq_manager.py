@@ -1,5 +1,6 @@
 # coding: utf-8
 
+import os
 import threading
 import traceback
 import time
@@ -23,9 +24,6 @@ CONF = cfg.CONF
 LOG = log.getLogger(__name__)
 
 metrics_map = {}
-
-config.load_kube_config()
-k8s_corev1api = client.CoreV1Api()
 
 STATUS_NOT_INSTALLED = -1
 STATUS_INSTALLED = 0
@@ -113,6 +111,12 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
     def __init__(self):
         super(RabbitmqPeriodicTasks, self).__init__(CONF)
 
+        if os.path.exists('{0}/.kube/config'.format(os.environ['HOME'])):
+            config.load_kube_config()
+        else:
+            config.load_incluster_config()
+        self.k8s_corev1api = client.CoreV1Api()
+
         self.user = CONF.rabbitmq_manager.user
         self.password = CONF.rabbitmq_manager.password
         self.cluster_pool = set()
@@ -157,7 +161,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
         self.k8s_svc_map = {}
         self.k8s_pods_map = {}
 
-        self.rabbitmq_nodes = k8s_corev1api.list_node(
+        self.rabbitmq_nodes = self.k8s_corev1api.list_node(
             label_selector=CONF.rabbitmq_manager.label_selector).items
 
         if len(self.rabbitmq_nodes) < 1:
@@ -165,10 +169,10 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
 
         self.helm_resource_map = self.helm.get_resource_map()
 
-        k8s_svcs = k8s_corev1api.list_namespaced_service(
+        k8s_svcs = self.k8s_corev1api.list_namespaced_service(
             CONF.rabbitmq_manager.k8s_namespace).items
 
-        k8s_pods = k8s_corev1api.list_namespaced_pod(
+        k8s_pods = self.k8s_corev1api.list_namespaced_pod(
             CONF.rabbitmq_manager.k8s_namespace).items
 
         for k8s_pod in k8s_pods:

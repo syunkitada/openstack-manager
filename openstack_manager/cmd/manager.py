@@ -1,14 +1,19 @@
 # coding: utf-8
 
 from openstack_manager.conf import config
-from openstack_manager.service import openstack, rabbitmq
+from openstack_manager.service import openstack_deploy_manager, openstack_monitor_manager, rabbitmq_manager
 
 
-def openstack_main():
+def openstack_deploy_manager_main():
     config.init()
-    openstack.launch()
+    openstack_deploy_manager.launch()
 
 
-def rabbitmq_main():
+def openstack_monitor_manager_main():
     config.init()
-    rabbitmq.launch()
+    openstack_monitor_manager.launch()
+
+
+def rabbitmq_manager_main():
+    config.init()
+    rabbitmq_manager.launch()

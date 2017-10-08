@@ -8,6 +8,8 @@ LOG = log.getLogger(__name__)
 
 CONF = cfg.CONF
 CONF.register_opts(opts.openstack_manager_opts, 'openstack_manager')
+CONF.register_opts(opts.openstack_deploy_manager_opts, 'openstack_deploy_manager')
+CONF.register_opts(opts.openstack_monitor_manager_opts, 'openstack_monitor_manager')
 CONF.register_opts(opts.rabbitmq_manager_opts, 'rabbitmq_manager')
 
 

@@ -241,6 +241,24 @@
 #db_max_retries = 20
 
 
+[openstack_deploy_manager]
+
+#
+# From openstack_manager.conf
+#
+
+# IP address to listen on (string value)
+#bind_host = 0.0.0.0
+
+# Port number to listen on (integer value)
+# Minimum value: 1
+# Maximum value: 65535
+#bind_port = 19998
+
+# check_interval (integer value)
+#check_interval = 20
+
+
 [openstack_manager]
 
 #
@@ -264,6 +282,38 @@
 # Port number to listen on (boolean value)
 #enable_influxdb = true
 
+# influxdb host (string value)
+#influxdb_host = monitoring-influxdb.kube-system.svc.cluster.local
+
+# influxdb port (integer value)
+# Minimum value: 1
+# Maximum value: 65535
+#influxdb_port = 8086
+
+# influxdb user (string value)
+#influxdb_user = root
+
+# influxdb password (string value)
+#influxdb_password = rootpass
+
+# influxdb database (string value)
+#influxdb_database = openstack
+
+
+[openstack_monitor_manager]
+
+#
+# From openstack_manager.conf
+#
+
+# IP address to listen on (string value)
+#bind_host = 0.0.0.0
+
+# Port number to listen on (integer value)
+# Minimum value: 1
+# Maximum value: 65535
+#bind_port = 19998
+
 
 [rabbitmq_manager]
 
@@ -283,7 +333,7 @@
 #check_interval = 20
 
 # wait_unhealty_pods_interval (integer value)
-#wait_unhealty_pods_time = 300
+#wait_unhealty_pods_time = 360
 
 # rabbitmq user (string value)
 #user = openstack
