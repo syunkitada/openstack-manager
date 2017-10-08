@@ -311,3 +311,6 @@
 
 # rpc_timeout (integer value)
 #rpc_timeout = 10
+
+# chart_repo_prefix (string value)
+#label_selector = rabbitmq-node=enable

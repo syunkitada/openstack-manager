@@ -1,11 +1,8 @@
 # coding: utf-8
 
-import os
 import threading
 import traceback
 import time
-import re
-import json
 from datetime import datetime
 
 from flask import Flask
@@ -27,13 +24,18 @@ LOG = log.getLogger(__name__)
 
 metrics_map = {}
 
+config.load_kube_config()
+k8s_corev1api = client.CoreV1Api()
+
 STATUS_NOT_INSTALLED = -1
 STATUS_INSTALLED = 0
 STATUS_ACTIVE = 1
 STATUS_ACTIVE_ALL_GREEN = 2
 
-config.load_kube_config()
-k8s_corev1api = client.CoreV1Api()
+TEST_QUEUE_NAME = 'testqueue'
+TEST_EXCHANGE_NAME = 'testex'
+TEST_ROUTING_KEY = 'test.health'
+TEST_MSG = 'hello'
 
 
 def launch():
@@ -71,7 +73,7 @@ class RabbitmqService(service.Service):
                                   initial_delay=0,
                                   periodic_interval_max=120)
 
-        if CONF.openstack_manager.enable_influxdb and False:
+        if CONF.openstack_manager.enable_influxdb:
             self.tg.add_dynamic_timer(self.get_influxdb_periodic_tasks,
                                       initial_delay=0,
                                       periodic_interval_max=120)
@@ -128,15 +130,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
         for id in range(pool_count):
             name = 'rabbitmq-cluster-{0}'.format(id)
             self.cluster_pool.add(name)
-            self.cluster_map[name] = {
-                'provisioning_status': STATUS_NOT_INSTALLED,
-                'assigned_svc': None,
-                'warning': {
-                    'exists_unhealty_pods': 0,
-                    'exists_standalone_nodes': 0,
-                    'failed_get_cluster_status': 0,
-                }
-            }
+            self.init_cluster_data(name)
 
         # initialize svc_map
         for svc_vhost in CONF.rabbitmq_manager.services:
@@ -278,12 +272,15 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
 
             if unhealty_pods != 0:
                 is_healty = False
-                LOG.warning('Found unhealty_pods')
                 cluster['warning']['exists_unhealty_pods'] += unhealty_pods
                 destroy_threshold = CONF.rabbitmq_manager.wait_unhealty_pods_time / CONF.rabbitmq_manager.check_interval
                 if cluster['provisioning_status'] < 1:
                     destroy_threshold = destroy_threshold * pods
 
+                LOG.warning('Found unhealty_pods={0}, destroy_threshold={1}'.format(
+                    cluster['warning']['exists_unhealty_pods'],
+                    destroy_threshold
+                ))
                 if cluster['warning']['exists_unhealty_pods'] >= destroy_threshold:
                     self.destroy(name)
             else:
@@ -352,16 +349,16 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
     def test_queue(self, pod):
         connection = 'amqp://{0}:{1}@{2}:5672/test'.format(
             self.user, self.password, pod.status.pod_ip)
-        print connection
-        exchange = Exchange('testex', type='direct')
-        queue = Queue('testqueue', exchange=exchange, routing_key='test.health')
+        exchange = Exchange(TEST_EXCHANGE_NAME, type='direct')
+        queue = Queue(TEST_QUEUE_NAME, exchange=exchange, routing_key=TEST_ROUTING_KEY)
         start = time.time()
         try:
             with Connection(connection) as c:
                 bound = queue(c.default_channel)
                 bound.declare()
                 bound_exc = exchange(c.default_channel)
-                msg = bound_exc.Message("hello")
+                msg = bound_exc.Message(TEST_MSG)
+                bound_exc.publish(msg, routing_key=TEST_ROUTING_KEY)
 
                 simple_queue = c.SimpleQueue(queue)
                 msg = simple_queue.get(block=True, timeout=CONF.rabbitmq_manager.rpc_timeout)
@@ -371,15 +368,32 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
             return False
 
         elapsed_time = time.time() - start
-        LOG.info("Latency: {0}").format(elapsed_time)
+
+        LOG.info("Latency: {0}".format(elapsed_time))
+        timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+        metrics_map['rabbitmq_msg_latency'] = {
+            'tags': {"pod": pod.metadata.name, "deployment": pod.metadata.labels['app']},
+            'value': elapsed_time,
+            'time': timestamp,
+        }
         return True
+
+    def init_cluster_data(self, name):
+        self.cluster_map[name] = {
+            'provisioning_status': STATUS_NOT_INSTALLED,
+            'assigned_svc': None,
+            'warning': {
+                'exists_unhealty_pods': 0,
+                'exists_standalone_nodes': 0,
+                'failed_get_cluster_status': 0,
+            }
+        }
 
     def destroy(self, name):
         LOG.error("Destroy {0}: {1}".format(name, self.cluster_map[name]))
         self.assign_services_to_cluster(ignore=name)
         self.helm.delete(name)
-        self.cluster_map[name]['provisioning_status'] = -1
-        self.cluster_map[name]['assigned_svc'] = None
+        self.init_cluster_data(name)
 
     def assign_services_to_cluster(self, ignore=None):
         for svc_name, svc in self.svc_map.items():
@@ -400,7 +414,13 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
 class InfluxdbPeriodicTasks(periodic_task.PeriodicTasks):
     def __init__(self):
         super(InfluxdbPeriodicTasks, self).__init__(CONF)
-        self.influxdb = InfluxDBClient('10.32.237.184', 8086, 'root', 'rootpass', 'openstack')
+        self.influxdb = InfluxDBClient(
+            CONF.openstack_manager.influxdb_host,
+            CONF.openstack_manager.influxdb_port,
+            CONF.openstack_manager.influxdb_user,
+            CONF.openstack_manager.influxdb_password,
+            CONF.openstack_manager.influxdb_database,
+        )
 
     def periodic_tasks(self, context, raise_on_error=False):
         return self.run_periodic_tasks(context, raise_on_error=raise_on_error)
@@ -418,4 +438,5 @@ class InfluxdbPeriodicTasks(periodic_task.PeriodicTasks):
                 }
             })
 
-        self.influxdb.write_points(json_body)
+        if len(json_body) > 0:
+            self.influxdb.write_points(json_body)
