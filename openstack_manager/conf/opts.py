@@ -108,7 +108,7 @@ rabbitmq_manager_opts = [
         help='check_interval'),
     cfg.IntOpt(
         'wait_unhealty_pods_time',
-        default=360,
+        default=600,
         help='wait_unhealty_pods_interval'),
     cfg.StrOpt(
         'user',

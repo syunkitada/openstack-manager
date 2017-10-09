@@ -245,6 +245,13 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                 if not pod.status.phase == 'Running':
                     continue
 
+                condition_status = True
+                for condition in pod.status.conditions:
+                    if condition.status != "True":
+                        condition_status = False
+                if not condition_status:
+                    continue
+
                 is_ready = True
                 LOG.debug(pod.status)
                 for cstatus in pod.status.container_statuses:
@@ -300,7 +307,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                         LOG.warning('Found standalone_pods')
                         cluster['warning']['exists_standalone_nodes'] += 1
                         if cluster['warning']['exists_standalone_nodes'] >= 2:
-                            self.destroy(name)
+                            is_destroy = True
                     else:
                         cluster['warning']['exists_standalone_nodes'] = 0
 
@@ -308,7 +315,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                         is_healty = False
                         LOG.warning('Failed get cluster_status')
                         cluster['warning']['failed_get_cluster_status'] += 1
-                        if cluster['warning']['failed_get_cluster_status'] >= 2:
+                        if cluster['warning']['failed_get_cluster_status'] >= 4:
                             is_destroy = True
                     else:
                         cluster['warning']['failed_get_cluster_status'] = 0
