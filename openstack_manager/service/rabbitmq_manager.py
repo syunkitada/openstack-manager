@@ -54,7 +54,7 @@ def metrics():
         for k, v in metrics['tags'].items():
             labels += '{0}="{1}",'.format(k, v)
         labels = labels[:-1]
-        pmetrics += '{0}{{{1}}} {2}\n'.format(measurement, labels, metrics['value'])
+        pmetrics += '{0}{{{1}}} {2}\n'.format(measurement.split(':')[0], labels, metrics['value'])
     return pmetrics
 
 
@@ -170,10 +170,10 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
         self.helm_resource_map = self.helm.get_resource_map()
 
         k8s_svcs = self.k8s_corev1api.list_namespaced_service(
-            CONF.rabbitmq_manager.k8s_namespace).items
+            CONF.openstack_manager.k8s_namespace).items
 
         k8s_pods = self.k8s_corev1api.list_namespaced_pod(
-            CONF.rabbitmq_manager.k8s_namespace).items
+            CONF.openstack_manager.k8s_namespace).items
 
         for k8s_pod in k8s_pods:
             app_label = k8s_pod.metadata.labels.get('app')
@@ -219,6 +219,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
     def check(self, context):
         LOG.info('Start check')
         self.update_resource_map()
+        timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
         for name, cluster in self.cluster_map.items():
             if name not in self.helm_resource_map:
@@ -230,9 +231,11 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
             running_pods = 0
             running_nodes = 0
             unhealty_pods = 0
+            healty_pods = 0
             failed_get_cluster_status = 0
-            is_partition = False
+            partition_pods = 0
             is_healty = True
+            is_destroy = False
             for pod in self.k8s_pods_map[name]:
                 # if line.find('Error') > 1 or line.find('Crash') > 1:
                 #     LOG.error('Pod is error, these node will be self.destroyed')
@@ -257,60 +260,79 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                 cluster_status = self.get_cluster_status(pod)
                 if cluster_status is None:
                     failed_get_cluster_status += 1
+                    continue
 
                 if cluster_status['is_partition']:
-                    is_partition = True
-                    break
+                    partition_pods += 1
 
                 running_nodes += cluster_status['running_nodes']
 
-                self.test_queue(pod)
+                if self.test_queue(pod):
+                    healty_pods += 1
 
-            if is_partition:
-                self.destroy(name)
-                continue
+            if partition_pods > 0:
+                is_destroy = True
 
             # if running_pods >= 2 and not self.test_queue(cluster):
             #     self.destroy(name)
             #     continue
 
-            if unhealty_pods != 0:
-                is_healty = False
-                cluster['warning']['exists_unhealty_pods'] += unhealty_pods
-                destroy_threshold = CONF.rabbitmq_manager.wait_unhealty_pods_time / CONF.rabbitmq_manager.check_interval
-                if cluster['provisioning_status'] < 1:
-                    destroy_threshold = destroy_threshold * pods
-
-                LOG.warning('Found unhealty_pods={0}, destroy_threshold={1}'.format(
-                    cluster['warning']['exists_unhealty_pods'],
-                    destroy_threshold
-                ))
-                if cluster['warning']['exists_unhealty_pods'] >= destroy_threshold:
-                    self.destroy(name)
-            else:
-                cluster['warning']['exists_unhealty_pods'] = 0
-
-                standalone_pods = (running_pods * running_pods) - running_nodes
-                if standalone_pods != 0:
+            if not is_destroy:
+                if unhealty_pods != 0:
                     is_healty = False
-                    LOG.warning('Found standalone_pods')
-                    cluster['warning']['exists_standalone_nodes'] += 1
-                    if cluster['warning']['exists_standalone_nodes'] >= 2:
-                        self.destroy(name)
-                else:
-                    cluster['warning']['exists_standalone_nodes'] = 0
+                    cluster['warning']['exists_unhealty_pods'] += unhealty_pods
+                    destroy_threshold = CONF.rabbitmq_manager.wait_unhealty_pods_time / CONF.rabbitmq_manager.check_interval
+                    if cluster['provisioning_status'] < STATUS_ACTIVE:
+                        destroy_threshold = destroy_threshold * pods
 
-                if failed_get_cluster_status != 0:
-                    is_healty = False
-                    LOG.warning('Failed get cluster_status')
-                    cluster['warning']['failed_get_cluster_status'] += 1
-                    if cluster['warning']['failed_get_cluster_status'] >= 2:
-                        self.destroy(name)
+                    LOG.warning('Found unhealty_pods={0}, destroy_threshold={1}'.format(
+                        cluster['warning']['exists_unhealty_pods'],
+                        destroy_threshold
+                    ))
+                    if cluster['warning']['exists_unhealty_pods'] >= destroy_threshold:
+                        is_destroy = True
                 else:
-                    cluster['warning']['failed_get_cluster_status'] = 0
+                    cluster['warning']['exists_unhealty_pods'] = 0
 
-                if is_healty:
-                    cluster['provisioning_status'] = 1
+                    standalone_pods = (running_pods * running_pods) - running_nodes
+                    if standalone_pods != 0:
+                        is_healty = False
+                        LOG.warning('Found standalone_pods')
+                        cluster['warning']['exists_standalone_nodes'] += 1
+                        if cluster['warning']['exists_standalone_nodes'] >= 2:
+                            self.destroy(name)
+                    else:
+                        cluster['warning']['exists_standalone_nodes'] = 0
+
+                    if failed_get_cluster_status != 0:
+                        is_healty = False
+                        LOG.warning('Failed get cluster_status')
+                        cluster['warning']['failed_get_cluster_status'] += 1
+                        if cluster['warning']['failed_get_cluster_status'] >= 2:
+                            is_destroy = True
+                    else:
+                        cluster['warning']['failed_get_cluster_status'] = 0
+
+                    if is_healty:
+                        cluster['provisioning_status'] = 1
+
+            if is_destroy:
+                self.destroy(name)
+
+            metrics_map['rabbitmq_partition:' + name] = {
+                'tags': {"deployment": name},
+                'value': partition_pods,
+            }
+
+            metrics_map['rabbitmq_unhealty_pods:' + name] = {
+                'tags': {"deployment": name},
+                'value': unhealty_pods,
+            }
+
+            metrics_map['rabbitmq_healty_pods:' + name] = {
+                'tags': {"deployment": name},
+                'value': healty_pods,
+            }
 
         self.assign_services_to_cluster()
         LOG.info("Check Summary")
@@ -320,7 +342,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
     def get_cluster_status(self, pod):
         pod_name = pod.metadata.name
         cluster_status = util.execute('kubectl exec -n {0} {1} rabbitmqctl cluster_status'.format(
-            CONF.rabbitmq_manager.k8s_namespace, pod_name),
+            CONF.openstack_manager.k8s_namespace, pod_name),
                                      enable_exception=False)
         if cluster_status['return_code'] != 0:
             return None
@@ -355,6 +377,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
             self.user, self.password, pod.status.pod_ip)
         exchange = Exchange(TEST_EXCHANGE_NAME, type='direct')
         queue = Queue(TEST_QUEUE_NAME, exchange=exchange, routing_key=TEST_ROUTING_KEY)
+        is_success = False
         start = time.time()
         try:
             with Connection(connection) as c:
@@ -367,20 +390,24 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                 simple_queue = c.SimpleQueue(queue)
                 msg = simple_queue.get(block=True, timeout=CONF.rabbitmq_manager.rpc_timeout)
                 msg.ack()
+                is_success = True
         except Exception:
             LOG.error(traceback.format_exc())
-            return False
 
-        elapsed_time = time.time() - start
+        if is_success:
+            elapsed_time = time.time() - start
+        else:
+            elapsed_time = 25
 
         LOG.info("Latency: {0}".format(elapsed_time))
         timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-        metrics_map['rabbitmq_msg_latency'] = {
+        metrics_map['rabbitmq_msg_latency:'+pod.metadata.name] = {
             'tags': {"pod": pod.metadata.name, "deployment": pod.metadata.labels['app']},
             'value': elapsed_time,
             'time': timestamp,
         }
-        return True
+
+        return is_success
 
     def init_cluster_data(self, name):
         self.cluster_map[name] = {
@@ -435,7 +462,7 @@ class InfluxdbPeriodicTasks(periodic_task.PeriodicTasks):
         json_body = []
         for measurement, metrics in metrics_map.items():
             json_body.append({
-                "measurement": measurement,
+                "measurement": measurement.split(':')[0],
                 "tags": metrics["tags"],
                 "fields": {
                     "value": metrics["value"],

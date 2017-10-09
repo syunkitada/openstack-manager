@@ -9,6 +9,18 @@ PortType = types.Integer(1, 65535)
 
 openstack_manager_opts = [
     cfg.StrOpt(
+        'k8s_namespace',
+        default='openstack',
+        help='k8s_namespace'),
+    cfg.StrOpt(
+        'tiller_namespace',
+        default='kube-system',
+        help='tiller_namespace'),
+    cfg.StrOpt(
+        'chart_repo_prefix',
+        default='/home/fabric/openstack-helm',
+        help='chart_repo_prefix'),
+    cfg.StrOpt(
         'values_file',
         default='/mnt/openstack/etc/values.yaml',
         help='values_file path'),
@@ -114,18 +126,6 @@ rabbitmq_manager_opts = [
         'cluster_backups',
         default=1,
         help='backups'),
-    cfg.StrOpt(
-        'k8s_namespace',
-        default='openstack',
-        help='k8s_namespace'),
-    cfg.StrOpt(
-        'tiller_namespace',
-        default='kube-system',
-        help='tiller_namespace'),
-    cfg.StrOpt(
-        'chart_repo_prefix',
-        default='/home/fabric/openstack-helm',
-        help='chart_repo_prefix'),
     cfg.IntOpt(
         'rpc_timeout',
         default=10,

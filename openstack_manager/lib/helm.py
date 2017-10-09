@@ -14,15 +14,15 @@ RE_HELM_LIST = re.compile('^([a-zA-Z0-9\-]+)[ \t]+([\d]+)[ \t]+.*[ \t]+([A-Z]+)[
 
 class Helm():
     def __init__(self):
-        os.environ['TILLER_NAMESPACE'] = CONF.rabbitmq_manager.tiller_namespace
-        self.k8s_namespace = CONF.rabbitmq_manager.k8s_namespace
-        self.chart_repo_prefix = CONF.rabbitmq_manager.chart_repo_prefix
-        self.values_file_path = CONF.rabbitmq_manager.values_file_path
+        os.environ['TILLER_NAMESPACE'] = CONF.openstack_manager.tiller_namespace
+        self.k8s_namespace = CONF.openstack_manager.k8s_namespace
+        self.chart_repo_prefix = CONF.openstack_manager.chart_repo_prefix
+        self.values_file = CONF.openstack_manager.values_file
 
     def install(self, name, chart):
         util.execute('helm install --namespace {0} --name {1} {2}/{3} -f {4}'.format(
                         self.k8s_namespace, name,  self.chart_repo_prefix, chart,
-                        self.values_file_path
+                        self.values_file
                      ))
 
     def delete(self, name):

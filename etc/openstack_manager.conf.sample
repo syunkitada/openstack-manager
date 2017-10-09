@@ -258,6 +258,9 @@
 # check_interval (integer value)
 #check_interval = 20
 
+# dir_dir (string value)
+#bin_dir = /mnt/openstack/bin
+
 
 [openstack_manager]
 
@@ -265,11 +268,17 @@
 # From openstack_manager.conf
 #
 
-# topic (string value)
-#topic = openstack_sample
+# k8s_namespace (string value)
+#k8s_namespace = openstack
 
-# host (string value)
-#host = localhost
+# tiller_namespace (string value)
+#tiller_namespace = kube-system
+
+# chart_repo_prefix (string value)
+#chart_repo_prefix = /home/fabric/openstack-helm
+
+# values_file path (string value)
+#values_file = /mnt/openstack/etc/values.yaml
 
 # IP address to listen on (string value)
 #bind_host = 0.0.0.0
@@ -346,18 +355,6 @@
 
 # backups (integer value)
 #cluster_backups = 1
-
-# k8s_namespace (string value)
-#k8s_namespace = openstack
-
-# values_file_path (string value)
-#values_file_path = /home/fabric/openstack-helm/openstack/values.yaml
-
-# tiller_namespace (string value)
-#tiller_namespace = kube-system
-
-# chart_repo_prefix (string value)
-#chart_repo_prefix = /home/fabric/openstack-helm
 
 # rpc_timeout (integer value)
 #rpc_timeout = 10
