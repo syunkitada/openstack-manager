@@ -241,35 +241,41 @@
 #db_max_retries = 20
 
 
-[openstack_deploy_manager]
+[influxdb]
 
 #
 # From openstack_manager.conf
 #
 
-# IP address to listen on (string value)
-#bind_host = 0.0.0.0
+# enable to report influxdb (boolean value)
+#enable = true
 
-# Port number to listen on (integer value)
+# influxdb host (string value)
+#host = monitoring-influxdb.kube-system.svc.cluster.local
+
+# influxdb port (integer value)
 # Minimum value: 1
 # Maximum value: 65535
-#bind_port = 19998
+#port = 8086
 
-# check_interval (integer value)
-#check_interval = 20
+# influxdb user (string value)
+#user = root
 
-# dir_dir (string value)
-#bin_dir = /mnt/openstack/bin
+# influxdb password (string value)
+#password = rootpass
+
+# influxdb database (string value)
+#database = openstack
 
 
-[openstack_manager]
+[k8s]
 
 #
 # From openstack_manager.conf
 #
 
-# k8s_namespace (string value)
-#k8s_namespace = openstack
+# namespace (string value)
+#namespace = openstack
 
 # tiller_namespace (string value)
 #tiller_namespace = kube-system
@@ -280,33 +286,57 @@
 # values_file path (string value)
 #values_file = /mnt/openstack/etc/values.yaml
 
-# IP address to listen on (string value)
-#bind_host = 0.0.0.0
 
-# Port number to listen on (integer value)
+[openstack_auth]
+
+#
+# From openstack_manager.conf
+#
+
+# auth_url (string value)
+#auth_url = https://keystone-public.k8s.example.com/v3
+
+# username of service account (string value)
+#username = admin
+
+# password of service account (string value)
+#password = adminpass
+
+# project name (string value)
+#project_name = admin
+
+# user domain_id (string value)
+#user_domain_id = default
+
+# project domain_id (string value)
+#project_domain_id = default
+
+
+[openstack_deploy_manager]
+
+#
+# From openstack_manager.conf
+#
+
+# enable prometheus_exporter (boolean value)
+#enable_prometheus_exporter = true
+
+# IP address to listen on for prometheus_exporter (string value)
+#prometheus_exporter_bind_host = 0.0.0.0
+
+# Port number to listen on for prometheus_exporter (integer value)
 # Minimum value: 1
 # Maximum value: 65535
-#bind_port = 19999
+#prometheus_exporter_bind_port = 19201
 
-# Port number to listen on (boolean value)
-#enable_influxdb = true
+# check_interval (integer value)
+#check_interval = 20
 
-# influxdb host (string value)
-#influxdb_host = monitoring-influxdb.kube-system.svc.cluster.local
+# dir_dir (string value)
+#bin_dir = /mnt/openstack/bin
 
-# influxdb port (integer value)
-# Minimum value: 1
-# Maximum value: 65535
-#influxdb_port = 8086
-
-# influxdb user (string value)
-#influxdb_user = root
-
-# influxdb password (string value)
-#influxdb_password = rootpass
-
-# influxdb database (string value)
-#influxdb_database = openstack
+# upgrade_values_sh path (string value)
+#upgrade_values_sh = /mnt/openstack/bin/upgrade_values.sh
 
 
 [openstack_monitor_manager]
@@ -315,13 +345,16 @@
 # From openstack_manager.conf
 #
 
-# IP address to listen on (string value)
-#bind_host = 0.0.0.0
+# enable prometheus_exporter (boolean value)
+#enable_prometheus_exporter = true
 
-# Port number to listen on (integer value)
+# IP address to listen on for prometheus_exporter (string value)
+#prometheus_exporter_bind_host = 0.0.0.0
+
+# Port number to listen on for prometheus_exporter (integer value)
 # Minimum value: 1
 # Maximum value: 65535
-#bind_port = 19998
+#prometheus_exporter_bind_port = 19202
 
 
 [rabbitmq_manager]
@@ -330,13 +363,16 @@
 # From openstack_manager.conf
 #
 
-# IP address to listen on (string value)
-#bind_host = 0.0.0.0
+# enable prometheus_exporter (boolean value)
+#enable_prometheus_exporter = true
 
-# Port number to listen on (integer value)
+# IP address to listen on for prometheus_exporter (string value)
+#prometheus_exporter_bind_host = 0.0.0.0
+
+# Port number to listen on for prometheus_exporter (integer value)
 # Minimum value: 1
 # Maximum value: 65535
-#bind_port = 19998
+#prometheus_exporter_bind_port = 19203
 
 # check_interval (integer value)
 #check_interval = 20
@@ -360,4 +396,4 @@
 #rpc_timeout = 10
 
 # chart_repo_prefix (string value)
-#label_selector = rabbitmq-node=enable
+#node_label_selector = rabbitmq-node=enable

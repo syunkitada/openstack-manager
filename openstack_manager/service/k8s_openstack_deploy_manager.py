@@ -150,10 +150,15 @@ class ServicePeriodicTasks(periodic_task.PeriodicTasks):
         self.k8s_corev1api = client.CoreV1Api()
 
         # execute bootstrap files
+        bootstrap_files = []
         for root, dirs, files in os.walk(self.bin_dir):
             for file in files:
                 if file.find('bootstrap-') == 0:
-                    util.execute(os.path.join(root, file))
+                    bootstrap_files.append(os.path.join(root, file))
+
+        bootstrap_files.sort()
+        for bootstrap_file in bootstrap_files:
+            util.execute(bootstrap_file)
 
         self.resource_map = helm.get_resource_map()
 
