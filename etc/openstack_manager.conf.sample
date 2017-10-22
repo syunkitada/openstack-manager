@@ -342,7 +342,7 @@
 #check_interval = 20
 
 # wait_unhealty_pods_interval (integer value)
-#wait_unhealty_pods_time = 360
+#wait_unhealty_pods_time = 600
 
 # rabbitmq user (string value)
 #user = openstack

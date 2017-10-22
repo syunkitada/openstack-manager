@@ -37,10 +37,99 @@ TEST_MSG = 'hello'
 
 
 def launch():
-    launcher = service.launch(CONF, RabbitmqService())
+    launcher = service.launch(CONF, ServiceManager())
     launcher.wait()
 
 
+class ServiceManager(service.Service):
+    def __init__(self):
+        super(ServiceManager, self).__init__()
+
+    def start(self):
+        LOG.info('start')
+
+        if CONF.influxdb.enable:
+            self.influxdb_periodic_tasks = InfluxdbPeriodicTasks()
+            self.tg.add_dynamic_timer(self._get_influxdb_periodic_tasks,
+                                      initial_delay=0,
+                                      periodic_interval_max=120)
+
+        if not CONF.rabbitmq_manager.enable_prometheus_exporter:
+            self.prometheus_exporter_thread = self._spawn_prometheus_exporter()
+        else:
+            self.prometheus_exporter_thread = None
+
+        self.periodic_tasks = ServicePeriodicTasks()
+        self.tg.add_dynamic_timer(self._get_periodic_tasks,
+                                  initial_delay=0,
+                                  periodic_interval_max=120)
+
+    def wait(self):
+        LOG.info('wait')
+
+    def stop(self):
+        LOG.info('stop')
+
+        if self.prometheus_exporter_thread is not None:
+            self.prometheus_exporter_thread.join()
+
+        super(ServiceManager, self).stop()
+
+    def _get_periodic_tasks(self, raise_on_error=False):
+        ctxt = {}
+        return self.periodic_tasks.periodic_tasks(ctxt, raise_on_error=raise_on_error)
+
+    def _get_influxdb_periodic_tasks(self, raise_on_error=False):
+        ctxt = {}
+        return self.influxdb_periodic_tasks.periodic_tasks(ctxt, raise_on_error=raise_on_error)
+
+    def _spawn_prometheus_exporter(self):
+        t = threading.Thread(target=wsgi_app.run, kwargs={
+            'host': CONF.openstack_deploy_manager.bind_host,
+            'port': CONF.openstack_deploy_manager.bind_port
+        })
+        t.daemon = True
+        t.start()
+        return t
+
+
+#
+# influxdb reporter
+#
+class InfluxdbPeriodicTasks(periodic_task.PeriodicTasks):
+    def __init__(self):
+        super(InfluxdbPeriodicTasks, self).__init__(CONF)
+        self.influxdb = InfluxDBClient(
+            CONF.influxdb.host,
+            CONF.influxdb.port,
+            CONF.influxdb.user,
+            CONF.influxdb.password,
+            CONF.influxdb.database,
+        )
+
+    def periodic_tasks(self, context, raise_on_error=False):
+        return self.run_periodic_tasks(context, raise_on_error=raise_on_error)
+
+    @periodic_task.periodic_task(spacing=60)
+    def report(self, context):
+        LOG.info('Report metrics to influxdb')
+        json_body = []
+        for measurement, metrics in metrics_map.items():
+            json_body.append({
+                "measurement": measurement.split(':')[0],
+                "tags": metrics["tags"],
+                "fields": {
+                    "value": metrics["value"],
+                }
+            })
+
+        if len(json_body) > 0:
+            self.influxdb.write_points(json_body)
+
+
+#
+# prometheus exporter
+#
 @wsgi_app.route("/")
 def status():
     return "OK"
@@ -58,58 +147,12 @@ def metrics():
     return pmetrics
 
 
-class RabbitmqService(service.Service):
+#
+# service tasks
+#
+class ServicePeriodicTasks(periodic_task.PeriodicTasks):
     def __init__(self):
-        super(RabbitmqService, self).__init__()
-
-    def start(self):
-        LOG.info('start')
-        self.rabbitmq_periodic_tasks = RabbitmqPeriodicTasks()
-        self.influxdb_periodic_tasks = InfluxdbPeriodicTasks()
-        self.wsgi_thread = self.spawn_app()
-        self.tg.add_dynamic_timer(self.get_rabbitmq_periodic_tasks,
-                                  initial_delay=0,
-                                  periodic_interval_max=120)
-
-        if CONF.openstack_manager.enable_influxdb:
-            self.tg.add_dynamic_timer(self.get_influxdb_periodic_tasks,
-                                      initial_delay=0,
-                                      periodic_interval_max=120)
-
-    def wait(self):
-        LOG.info('wait')
-
-    def stop(self):
-        LOG.info('stop')
-
-        if self.wsgi_thread:
-            self.wsgi_thread.join()
-
-        super(RabbitmqService, self).stop()
-
-    def get_rabbitmq_periodic_tasks(self, raise_on_error=False):
-        ctxt = {}
-        return self.rabbitmq_periodic_tasks.periodic_tasks(ctxt, raise_on_error=raise_on_error)
-
-    def get_influxdb_periodic_tasks(self, raise_on_error=False):
-        ctxt = {}
-        return self.influxdb_periodic_tasks.periodic_tasks(ctxt, raise_on_error=raise_on_error)
-
-    def spawn_app(self):
-        # t = threading.Thread(target=wsgi_app.run, args=args, kwargs=kwargs)
-
-        t = threading.Thread(target=wsgi_app.run, kwargs={
-            'host': CONF.rabbitmq_manager.bind_host,
-            'port': CONF.rabbitmq_manager.bind_port
-        })
-        t.daemon = True
-        t.start()
-        return t
-
-
-class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
-    def __init__(self):
-        super(RabbitmqPeriodicTasks, self).__init__(CONF)
+        super(ServicePeriodicTasks, self).__init__(CONF)
 
         if os.path.exists('{0}/.kube/config'.format(os.environ['HOME'])):
             config.load_kube_config()
@@ -119,7 +162,6 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
 
         self.user = CONF.rabbitmq_manager.user
         self.password = CONF.rabbitmq_manager.password
-        self.cluster_pool = set()
         self.cluster_map = {}
         self.svc_map = {}
         self.helm_resource_map = {}
@@ -129,67 +171,23 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
 
         self.update_resource_map()
 
-        # initialize cluster_map
-        pool_count = len(CONF.rabbitmq_manager.services) + CONF.rabbitmq_manager.cluster_backups
-        for id in range(pool_count):
-            name = 'rabbitmq-cluster-{0}'.format(id)
-            self.cluster_pool.add(name)
-            self.init_cluster_data(name)
-
-        # initialize svc_map
-        for svc_vhost in CONF.rabbitmq_manager.services:
-            name = 'rabbitmq-svc-{0}'.format(svc_vhost)
-            self.svc_map[name] = {
-                'provisioning_status': STATUS_NOT_INSTALLED,
-                'vhost': svc_vhost,
-                'selector': None,
+        # initialize svc_map, and install rabbitmq-svc
+        for name in CONF.rabbitmq_manager.services:
+            cluster_name = 'rabbitmq-cluster-{0}'.format(name)
+            svc_name = 'rabbitmq-svc-{0}'.format(name)
+            self.init_cluster_data(cluster_name)
+            self.svc_map[svc_name] = {
+                'selector': cluster_name,
+                'vhost': name,
             }
 
-        # helm install svc_map
-        for name, svc in self.svc_map.items():
-            if name not in self.helm_resource_map:
-                self.helm.install(name, 'rabbitmq-svc')
-                svc['provisioning_status'] = STATUS_INSTALLED
-            else:
-                svc['provisioning_status'] = STATUS_ACTIVE
-                selector = self.k8s_svc_map[name].spec.selector['app']
-                if selector != 'none':
-                    svc['selector'] = self.k8s_svc_map[name].spec.selector['app']
+            if svc_name not in self.helm_resource_map:
+                self.helm.install(svc_name, 'rabbitmq-svc')
 
-    def update_resource_map(self):
-        self.helm_resource_map = {}
-        self.k8s_svc_map = {}
-        self.k8s_pods_map = {}
+        self.update_resource_map()
 
-        self.rabbitmq_nodes = self.k8s_corev1api.list_node(
-            label_selector=CONF.rabbitmq_manager.label_selector).items
-
-        if len(self.rabbitmq_nodes) < 1:
-            raise Exception('rabbitmq-nodes are not found')
-
-        self.helm_resource_map = self.helm.get_resource_map()
-
-        k8s_svcs = self.k8s_corev1api.list_namespaced_service(
-            CONF.openstack_manager.k8s_namespace).items
-
-        k8s_pods = self.k8s_corev1api.list_namespaced_pod(
-            CONF.openstack_manager.k8s_namespace).items
-
-        for k8s_pod in k8s_pods:
-            app_label = k8s_pod.metadata.labels.get('app')
-            if app_label is None:
-                continue
-            pods = self.k8s_pods_map.get(app_label, [])
-            pods.append(k8s_pod)
-            self.k8s_pods_map[app_label] = pods
-
-        for k8s_svc in k8s_svcs:
-            name = k8s_svc.metadata.name
-            self.k8s_svc_map[name] = k8s_svc
-
-            svc = self.svc_map.get(name)
-            if svc is None:
-                continue
+        for svc_name, svc in self.svc_map.items():
+            k8s_svc = self.k8s_svc_map[svc_name]
 
             node_port = None
             for port in k8s_svc.spec.ports:
@@ -211,6 +209,39 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
 
             transport_url = transport_url[0:-2] + '\\\\/' + svc['vhost']
             svc['transport_url'] = transport_url
+            option = "--set selector={0},transport_url='{1}'".format(svc['selector'], svc['transport_url'])
+            self.helm.upgrade(svc_name, 'rabbitmq-svc', option)
+
+    def update_resource_map(self):
+        self.helm_resource_map = {}
+        self.k8s_svc_map = {}
+        self.k8s_pods_map = {}
+
+        self.rabbitmq_nodes = self.k8s_corev1api.list_node(
+            label_selector=CONF.rabbitmq_manager.node_label_selector).items
+
+        if len(self.rabbitmq_nodes) < 1:
+            raise Exception('rabbitmq-nodes are not found')
+
+        self.helm_resource_map = self.helm.get_resource_map()
+
+        k8s_svcs = self.k8s_corev1api.list_namespaced_service(
+            CONF.k8s.namespace).items
+
+        k8s_pods = self.k8s_corev1api.list_namespaced_pod(
+            CONF.k8s.namespace).items
+
+        for k8s_pod in k8s_pods:
+            app_label = k8s_pod.metadata.labels.get('app')
+            if app_label is None:
+                continue
+            pods = self.k8s_pods_map.get(app_label, [])
+            pods.append(k8s_pod)
+            self.k8s_pods_map[app_label] = pods
+
+        for k8s_svc in k8s_svcs:
+            name = k8s_svc.metadata.name
+            self.k8s_svc_map[name] = k8s_svc
 
     def periodic_tasks(self, context, raise_on_error=False):
         return self.run_periodic_tasks(context, raise_on_error=raise_on_error)
@@ -219,7 +250,6 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
     def check(self, context):
         LOG.info('Start check')
         self.update_resource_map()
-        timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
         for name, cluster in self.cluster_map.items():
             if name not in self.helm_resource_map:
@@ -235,12 +265,8 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
             failed_get_cluster_status = 0
             partition_pods = 0
             is_healty = True
-            is_destroy = False
+            is_alert = False
             for pod in self.k8s_pods_map[name]:
-                # if line.find('Error') > 1 or line.find('Crash') > 1:
-                #     LOG.error('Pod is error, these node will be self.destroyed')
-                #     self.destroy(name)
-
                 pods += 1
                 if not pod.status.phase == 'Running':
                     continue
@@ -278,26 +304,22 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                     healty_pods += 1
 
             if partition_pods > 0:
-                is_destroy = True
+                is_alert = True
 
-            # if running_pods >= 2 and not self.test_queue(cluster):
-            #     self.destroy(name)
-            #     continue
-
-            if not is_destroy:
+            if not is_alert:
                 if unhealty_pods != 0:
                     is_healty = False
                     cluster['warning']['exists_unhealty_pods'] += unhealty_pods
-                    destroy_threshold = CONF.rabbitmq_manager.wait_unhealty_pods_time / CONF.rabbitmq_manager.check_interval
+                    alert_threshold = CONF.rabbitmq_manager.wait_unhealty_pods_time / CONF.rabbitmq_manager.check_interval
                     if cluster['provisioning_status'] < STATUS_ACTIVE:
-                        destroy_threshold = destroy_threshold * pods
+                        alert_threshold = alert_threshold * pods
 
-                    LOG.warning('Found unhealty_pods={0}, destroy_threshold={1}'.format(
+                    LOG.warning('Found unhealty_pods={0}, alert_threshold={1}'.format(
                         cluster['warning']['exists_unhealty_pods'],
-                        destroy_threshold
+                        alert_threshold
                     ))
-                    if cluster['warning']['exists_unhealty_pods'] >= destroy_threshold:
-                        is_destroy = True
+                    if cluster['warning']['exists_unhealty_pods'] >= alert_threshold:
+                        is_alert = True
                 else:
                     cluster['warning']['exists_unhealty_pods'] = 0
 
@@ -307,7 +329,7 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                         LOG.warning('Found standalone_pods')
                         cluster['warning']['exists_standalone_nodes'] += 1
                         if cluster['warning']['exists_standalone_nodes'] >= 2:
-                            is_destroy = True
+                            is_alert = True
                     else:
                         cluster['warning']['exists_standalone_nodes'] = 0
 
@@ -316,15 +338,15 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                         LOG.warning('Failed get cluster_status')
                         cluster['warning']['failed_get_cluster_status'] += 1
                         if cluster['warning']['failed_get_cluster_status'] >= 4:
-                            is_destroy = True
+                            is_alert = True
                     else:
                         cluster['warning']['failed_get_cluster_status'] = 0
 
                     if is_healty:
                         cluster['provisioning_status'] = 1
 
-            if is_destroy:
-                self.destroy(name)
+            if is_alert:
+                self.alert(name)
 
             metrics_map['rabbitmq_partition:' + name] = {
                 'tags': {"deployment": name},
@@ -341,7 +363,6 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
                 'value': healty_pods,
             }
 
-        self.assign_services_to_cluster()
         LOG.info("Check Summary")
         for cluster_name, cluster in self.cluster_map.items():
             LOG.info("{0}: {1}".format(cluster_name, cluster))
@@ -349,8 +370,8 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
     def get_cluster_status(self, pod):
         pod_name = pod.metadata.name
         cluster_status = util.execute('kubectl exec -n {0} {1} rabbitmqctl cluster_status'.format(
-            CONF.openstack_manager.k8s_namespace, pod_name),
-                                     enable_exception=False)
+                                      CONF.k8s.namespace, pod_name),
+                                      enable_exception=False)
         if cluster_status['return_code'] != 0:
             return None
 
@@ -419,7 +440,6 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
     def init_cluster_data(self, name):
         self.cluster_map[name] = {
             'provisioning_status': STATUS_NOT_INSTALLED,
-            'assigned_svc': None,
             'warning': {
                 'exists_unhealty_pods': 0,
                 'exists_standalone_nodes': 0,
@@ -427,54 +447,5 @@ class RabbitmqPeriodicTasks(periodic_task.PeriodicTasks):
             }
         }
 
-    def destroy(self, name):
-        LOG.error("Destroy {0}: {1}".format(name, self.cluster_map[name]))
-        self.assign_services_to_cluster(ignore=name)
-        self.helm.delete(name)
-        self.init_cluster_data(name)
-
-    def assign_services_to_cluster(self, ignore=None):
-        for svc_name, svc in self.svc_map.items():
-            if svc['selector'] == 'none' or svc['selector'] == ignore:
-                for cluster_name, cluster in self.cluster_map.items():
-                    if cluster_name == ignore:
-                        continue
-
-                    if cluster['provisioning_status'] >= STATUS_ACTIVE and cluster['assigned_svc'] is None:
-                        option = "--set selector={0},transport_url='{1}'".format(
-                            cluster_name, svc['transport_url'])
-                        self.helm.upgrade(svc_name, 'rabbitmq-svc', option)
-                        cluster['assigned_svc'] = svc_name
-                        svc['selector'] = cluster_name
-                        break
-
-
-class InfluxdbPeriodicTasks(periodic_task.PeriodicTasks):
-    def __init__(self):
-        super(InfluxdbPeriodicTasks, self).__init__(CONF)
-        self.influxdb = InfluxDBClient(
-            CONF.openstack_manager.influxdb_host,
-            CONF.openstack_manager.influxdb_port,
-            CONF.openstack_manager.influxdb_user,
-            CONF.openstack_manager.influxdb_password,
-            CONF.openstack_manager.influxdb_database,
-        )
-
-    def periodic_tasks(self, context, raise_on_error=False):
-        return self.run_periodic_tasks(context, raise_on_error=raise_on_error)
-
-    @periodic_task.periodic_task(spacing=60)
-    def report(self, context):
-        LOG.info('report influxdb')
-        json_body = []
-        for measurement, metrics in metrics_map.items():
-            json_body.append({
-                "measurement": measurement.split(':')[0],
-                "tags": metrics["tags"],
-                "fields": {
-                    "value": metrics["value"],
-                }
-            })
-
-        if len(json_body) > 0:
-            self.influxdb.write_points(json_body)
+    def alert(self, name):
+        LOG.error("Alert {0}: {1}".format(name, self.cluster_map[name]))

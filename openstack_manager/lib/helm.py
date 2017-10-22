@@ -14,10 +14,10 @@ RE_HELM_LIST = re.compile('^([a-zA-Z0-9\-]+)[ \t]+([\d]+)[ \t]+.*[ \t]+([A-Z]+)[
 
 class Helm():
     def __init__(self):
-        os.environ['TILLER_NAMESPACE'] = CONF.openstack_manager.tiller_namespace
-        self.k8s_namespace = CONF.openstack_manager.k8s_namespace
-        self.chart_repo_prefix = CONF.openstack_manager.chart_repo_prefix
-        self.values_file = CONF.openstack_manager.values_file
+        os.environ['TILLER_NAMESPACE'] = CONF.k8s.tiller_namespace
+        self.k8s_namespace = CONF.k8s.namespace
+        self.chart_repo_prefix = CONF.k8s.chart_repo_prefix
+        self.values_file = CONF.k8s.values_file
 
     def install(self, name, chart):
         util.execute('helm install --namespace {0} --name {1} {2}/{3} -f {4}'.format(

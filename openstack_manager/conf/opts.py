@@ -7,11 +7,11 @@ CONF = cfg.CONF
 PortType = types.Integer(1, 65535)
 
 
-openstack_manager_opts = [
+k8s_opts = [
     cfg.StrOpt(
-        'k8s_namespace',
+        'namespace',
         default='openstack',
-        help='k8s_namespace'),
+        help='namespace'),
     cfg.StrOpt(
         'tiller_namespace',
         default='kube-system',
@@ -24,52 +24,78 @@ openstack_manager_opts = [
         'values_file',
         default='/mnt/openstack/etc/values.yaml',
         help='values_file path'),
+
+]
+
+openstack_auth_opts = [
     cfg.StrOpt(
-        'bind_host',
-        default='0.0.0.0',
-        help='IP address to listen on'),
-    cfg.Opt(
-        'bind_port',
-        type=PortType,
-        default=19999,
-        help='Port number to listen on'),
+        'auth_url',
+        default='https://keystone-public.k8s.example.com/v3',
+        help='auth_url'),
+    cfg.StrOpt(
+        'username',
+        default='admin',
+        help='username of service account'),
+    cfg.StrOpt(
+        'password',
+        default='adminpass',
+        help='password of service account'),
+    cfg.StrOpt(
+        'project_name',
+        default='admin',
+        help='project name'),
+    cfg.StrOpt(
+        'user_domain_id',
+        default='default',
+        help='user domain_id'),
+    cfg.StrOpt(
+        'project_domain_id',
+        default='default',
+        help='project domain_id'),
+]
+
+influxdb_opts = [
     cfg.BoolOpt(
-        'enable_influxdb',
+        'enable',
         default=True,
-        help='Port number to listen on'),
+        help='enable to report influxdb'),
     cfg.StrOpt(
-        'influxdb_host',
+        'host',
         default='monitoring-influxdb.kube-system.svc.cluster.local',
         help='influxdb host'),
     cfg.Opt(
-        'influxdb_port',
+        'port',
         type=PortType,
         default=8086,
         help='influxdb port'),
     cfg.StrOpt(
-        'influxdb_user',
+        'user',
         default='root',
         help='influxdb user'),
     cfg.StrOpt(
-        'influxdb_password',
+        'password',
         default='rootpass',
         help='influxdb password'),
     cfg.StrOpt(
-        'influxdb_database',
+        'database',
         default='openstack',
         help='influxdb database'),
 ]
 
 openstack_deploy_manager_opts = [
+    cfg.BoolOpt(
+        'enable_prometheus_exporter',
+        default=True,
+        help='enable prometheus_exporter'),
     cfg.StrOpt(
-        'bind_host',
+        'prometheus_exporter_bind_host',
         default='0.0.0.0',
-        help='IP address to listen on'),
+        help='IP address to listen on for prometheus_exporter'),
     cfg.Opt(
-        'bind_port',
+        'prometheus_exporter_bind_port',
         type=PortType,
-        default=19998,
-        help='Port number to listen on'),
+        default=19201,
+        help='Port number to listen on for prometheus_exporter'),
     cfg.IntOpt(
         'check_interval',
         default=20,
@@ -78,30 +104,42 @@ openstack_deploy_manager_opts = [
         'bin_dir',
         default='/mnt/openstack/bin',
         help='dir_dir'),
+    cfg.StrOpt(
+        'upgrade_values_sh',
+        default='/mnt/openstack/bin/upgrade_values.sh',
+        help='upgrade_values_sh path'),
 ]
 
 openstack_monitor_manager_opts = [
+    cfg.BoolOpt(
+        'enable_prometheus_exporter',
+        default=True,
+        help='enable prometheus_exporter'),
     cfg.StrOpt(
-        'bind_host',
+        'prometheus_exporter_bind_host',
         default='0.0.0.0',
-        help='IP address to listen on'),
+        help='IP address to listen on for prometheus_exporter'),
     cfg.Opt(
-        'bind_port',
+        'prometheus_exporter_bind_port',
         type=PortType,
-        default=19998,
-        help='Port number to listen on'),
+        default=19202,
+        help='Port number to listen on for prometheus_exporter'),
 ]
 
 rabbitmq_manager_opts = [
+    cfg.BoolOpt(
+        'enable_prometheus_exporter',
+        default=True,
+        help='enable prometheus_exporter'),
     cfg.StrOpt(
-        'bind_host',
+        'prometheus_exporter_bind_host',
         default='0.0.0.0',
-        help='IP address to listen on'),
+        help='IP address to listen on for prometheus_exporter'),
     cfg.Opt(
-        'bind_port',
+        'prometheus_exporter_bind_port',
         type=PortType,
-        default=19998,
-        help='Port number to listen on'),
+        default=19203,
+        help='Port number to listen on for prometheus_exporter'),
     cfg.IntOpt(
         'check_interval',
         default=20,
@@ -131,7 +169,7 @@ rabbitmq_manager_opts = [
         default=10,
         help='rpc_timeout'),
     cfg.StrOpt(
-        'label_selector',
+        'node_label_selector',
         default='rabbitmq-node=enable',
         help='chart_repo_prefix'),
 ]
@@ -139,7 +177,9 @@ rabbitmq_manager_opts = [
 
 def list_opts():
     return [
-        ('openstack_manager', itertools.chain(openstack_manager_opts)),
+        ('k8s', itertools.chain(k8s_opts)),
+        ('influxdb', itertools.chain(influxdb_opts)),
+        ('openstack_auth', itertools.chain(openstack_auth_opts)),
         ('openstack_deploy_manager', itertools.chain(openstack_deploy_manager_opts)),
         ('openstack_monitor_manager', itertools.chain(openstack_monitor_manager_opts)),
         ('rabbitmq_manager', itertools.chain(rabbitmq_manager_opts)),
