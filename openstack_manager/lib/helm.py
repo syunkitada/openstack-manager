@@ -18,6 +18,7 @@ class Helm():
         self.k8s_namespace = CONF.k8s.namespace
         self.chart_repo_prefix = CONF.k8s.chart_repo_prefix
         self.values_file = CONF.k8s.values_file
+        util.execute('helm init -c')
         util.execute('helm repo add {0} {1}'.format(CONF.k8s.chart_repo_name, CONF.k8s.chart_repo))
 
     def install(self, name, chart):
