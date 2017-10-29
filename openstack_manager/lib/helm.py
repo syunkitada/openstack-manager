@@ -18,6 +18,7 @@ class Helm():
         self.k8s_namespace = CONF.k8s.namespace
         self.chart_repo_prefix = CONF.k8s.chart_repo_prefix
         self.values_file = CONF.k8s.values_file
+        util.execute('helm repo add charts {0}'.format(CONF.k8s.chart_repo))
 
     def install(self, name, chart):
         util.execute('helm install --namespace {0} --name {1} {2}/{3} -f {4}'.format(
@@ -34,7 +35,8 @@ class Helm():
 
     def get_resource_map(self):
         resource_map = {}
-        result = util.execute('helm list', )
+        result = util.execute('helm repo update')
+        result = util.execute('helm list')
         for line in result['stdout'].split('\n'):
             m = RE_HELM_LIST.match(line)
             if m is None:

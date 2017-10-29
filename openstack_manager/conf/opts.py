@@ -17,6 +17,10 @@ k8s_opts = [
         default='kube-system',
         help='tiller_namespace'),
     cfg.StrOpt(
+        'chart_repo',
+        default='https://syunkitada.github.io/chartrepo/charts',
+        help='chart_repo'),
+    cfg.StrOpt(
         'chart_repo_prefix',
         default='/home/fabric/openstack-helm',
         help='chart_repo_prefix'),

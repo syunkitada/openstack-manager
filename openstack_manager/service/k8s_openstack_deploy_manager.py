@@ -142,6 +142,7 @@ class ServicePeriodicTasks(periodic_task.PeriodicTasks):
         super(ServicePeriodicTasks, self).__init__(CONF)
         self.resource_map = {}
         self.bin_dir = CONF.openstack_deploy_manager.bin_dir
+        self.helm = helm.Helm()
 
         if os.path.exists('{0}/.kube/config'.format(os.environ['HOME'])):
             config.load_kube_config()
@@ -160,7 +161,7 @@ class ServicePeriodicTasks(periodic_task.PeriodicTasks):
         for bootstrap_file in bootstrap_files:
             util.execute(bootstrap_file)
 
-        self.resource_map = helm.get_resource_map()
+        self.resource_map = self.helm.get_resource_map()
 
     def periodic_tasks(self, context, raise_on_error=False):
         return self.run_periodic_tasks(context, raise_on_error=raise_on_error)
@@ -170,7 +171,7 @@ class ServicePeriodicTasks(periodic_task.PeriodicTasks):
         LOG.info('Start check')
 
         # Check helm resources
-        tmp_resource_map = helm.get_resource_map()
+        tmp_resource_map = self.helm.get_resource_map()
         for resource_name, resource in self.resource_map.items():
             tmp_resource = tmp_resource_map.get[resource_name]
             if tmp_resource['version'] != resource['version']:
