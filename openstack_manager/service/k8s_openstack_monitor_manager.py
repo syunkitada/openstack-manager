@@ -160,16 +160,16 @@ class ServicePeriodicTasks(periodic_task.PeriodicTasks):
     def periodic_tasks(self, context, raise_on_error=False):
         return self.run_periodic_tasks(context, raise_on_error=raise_on_error)
 
-    @periodic_task.periodic_task(spacing=10)
+    @periodic_task.periodic_task(spacing=30)
     def check(self, context):
         LOG.info('Start check openstack')
 
         timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
         start_time = time.time()
-        self.keystone.projects.list()
+        self.keystone.services.list()
         elapsed_time = time.time() - start_time
-        metrics_map['openstack_keystone_project_list_latency'] = {
+        metrics_map['openstack_keystone_service_list_latency'] = {
             'tags': {"svc": "keystone"},
             'value': elapsed_time,
             'time': timestamp,
@@ -203,3 +203,8 @@ class ServicePeriodicTasks(periodic_task.PeriodicTasks):
         }
 
         LOG.info(metrics_map)
+
+    @periodic_task.periodic_task(spacing=30)
+    def check_k8s(self, context):
+        LOG.info('Start check k8s')
+        # TODO
